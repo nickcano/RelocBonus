@@ -84,10 +84,13 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="RewriteBlock.cpp" />
     <ClCompile Include="RewritePE.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="PeLibInclude.h" />
+    <ClInclude Include="RewriteBlock.h" />
+    <ClInclude Include="VectorUtils.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
