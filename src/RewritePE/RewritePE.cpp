@@ -2,10 +2,11 @@
 
 #include <Windows.h>
 
+#include <memory>
 
 struct PeSectionContents
 {
-	bool canPack;
+	std::string name;
 	std::vector<PeLib::byte> data;
 	unsigned int index, RVA, size, virtualSize, rawPointer;
 };
@@ -50,8 +51,103 @@ bool putData(std::vector<PeLib::byte> &destination, unsigned int offset, const T
 	return true;
 }
 
+
+
+class RewriteBlock // defines a block that we will rewrite (encrypt) on disk
+{
+public:
+	virtual bool getFirstEntryLoc(unsigned int size, unsigned int &firstEntryRVA, unsigned int &firstEntryOffset) const = 0;
+	virtual bool getNextEntryLoc(unsigned int size, unsigned int lastEntryOffset, unsigned int &nextEntryRVA, unsigned int &nextEntryOffset) const = 0;
+	virtual bool decrementEntry(unsigned int offset, unsigned int value) = 0;
+};
+
+class EntryPointRewriteBlock : public RewriteBlock
+{
+public:
+	EntryPointRewriteBlock(PeLib::PeFile32* _header) : header(_header) { }
+
+	virtual bool getFirstEntryLoc(unsigned int size, unsigned int &firstEntryRVA, unsigned int &firstEntryOffset) const
+	{
+		if (size > sizeof(this->header->peHeader().getAddressOfEntryPoint()))
+			return false;
+
+		// 0x18 is sizeof(Signature) + sizeof(IMAGE_FILE_HEADER), 0x10 is the offset of AddressOfEntryPoint into IMAGE_OPTIONAL_HEADER
+		firstEntryRVA = this->header->mzHeader().getAddressOfPeHeader() + 0x18 + 0x10;
+		firstEntryOffset = 0;
+		return true;
+	}
+
+	virtual bool getNextEntryLoc(unsigned int size, unsigned int lastEntryOffset, unsigned int &nextEntryRVA, unsigned int &nextEntryOffset) const
+	{
+		return false;
+	}
+
+	virtual bool decrementEntry(unsigned int offset, unsigned int value)
+	{
+		unsigned int original = this->header->peHeader().getAddressOfEntryPoint();
+		this->header->peHeader().setAddressOfEntryPoint(static_cast<PeLib::dword>(original - value));
+		return true;
+	}
+
+private:
+	PeLib::PeFile32* header;
+};
+
+class PeSectionRewriteBlock : public RewriteBlock
+{
+public:
+	PeSectionRewriteBlock(std::shared_ptr<PeSectionContents> _sec)
+		: sec(_sec), startOffset(0), subSize(_sec->size) { }
+	PeSectionRewriteBlock(std::shared_ptr<PeSectionContents> _sec, unsigned int _startOffset, unsigned int _subSize)
+		: sec(_sec), startOffset(_startOffset), subSize(_startOffset + _subSize)
+	{
+		if (this->subSize > this->sec->size)
+			this->subSize = this->sec->size;
+	}
+
+	virtual bool getFirstEntryLoc(unsigned int size, unsigned int &firstEntryRVA, unsigned int &firstEntryOffset) const
+	{
+		return this->getNextEntryLoc(size, this->startOffset, firstEntryRVA, firstEntryOffset);
+	}
+
+	virtual bool getNextEntryLoc(unsigned int size, unsigned int lastEntryOffset, unsigned int &nextEntryRVA, unsigned int &nextEntryOffset) const
+	{
+		if (lastEntryOffset + size >= this->subSize)
+			return false;
+
+		nextEntryOffset = lastEntryOffset + size;
+		nextEntryRVA = this->sec->RVA + nextEntryOffset;
+		return true;
+	}
+
+	virtual bool decrementEntry(unsigned int offset, unsigned int value)
+	{
+		unsigned int original;
+		if (!getData(this->sec->data, offset, original)) return false;
+		if (!putData(this->sec->data, offset, (original - value) )) return false;
+		return true;
+	}
+
+private:
+	unsigned int startOffset, subSize;
+	std::shared_ptr<PeSectionContents> sec;
+};
+
+
+struct PackedBlock // defines a block that has been rewritten
+{
+	PackedBlock(unsigned int _beginRVA) : beginRVA(_beginRVA), offsets() {}
+
+	unsigned int beginRVA;
+	std::vector<unsigned short> offsets;
+};
+
+
+
 void rebaseExecutable()
 {
+	bool targetDEPEnabled = true;
+
 	std::string modName = "test.exe";
 	std::string newName = "test.rebased.exe";
 
@@ -94,8 +190,10 @@ void rebaseExecutable()
 		return;
 	}
 
-	/* turn off ASLR (needed for next step) */
-	peHeader.setDllCharacteristics(characteristics & ~IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE);
+	/* turn off ASLR (needed for next step) and DEP (needed to overwrite certain parts of header) */
+	characteristics &= ~IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE;
+	if (!targetDEPEnabled) characteristics &= ~IMAGE_DLLCHARACTERISTICS_NX_COMPAT;
+	peHeader.setDllCharacteristics(characteristics);
 
 	/* request a base address of 0xFFFF0000 (which causes us to load at 0x00010000 on w7) */
 	peHeader.setImageBase(0xFFFF0000);
@@ -108,28 +206,87 @@ void rebaseExecutable()
 		return;
 	}
 
-	std::vector<PeSectionContents> sectionContents;
+	std::vector<std::shared_ptr<PeSectionContents>> sectionContents;
 	for (unsigned int sec = 0; sec < peFile.peHeader().getNumberOfSections(); sec++)
 	{
-		PeSectionContents sc;
-		sc.index = sec;
-		sc.RVA = peHeader.getVirtualAddress(sec);
-		sc.size = peHeader.getSizeOfRawData(sec);
-		sc.rawPointer = peHeader.getPointerToRawData(sec);
-		sc.canPack = peHeader.getSectionName(sec).compare(".text") == 0;
-		sc.virtualSize = peHeader.getVirtualSize(sec);
+		auto sc = std::make_shared<PeSectionContents>();
+		sc->index = sec;
+		sc->RVA = peHeader.getVirtualAddress(sec);
+		sc->size = peHeader.getSizeOfRawData(sec);
+		sc->rawPointer = peHeader.getPointerToRawData(sec);
+		sc->virtualSize = peHeader.getVirtualSize(sec);
+		sc->name = peHeader.getSectionName(sec);
 
-		char* block = new char[sc.size];
+		char* block = new char[sc->size];
 		file.seekg(peHeader.getPointerToRawData(sec), std::ios::beg);
-		file.read(block, sc.size);
+		file.read(block, sc->size);
 
-		sc.data = std::vector<PeLib::byte>(block, block + sc.size);
+		sc->data = std::vector<PeLib::byte>(block, block + sc->size);
 		sectionContents.push_back(sc);
 
 		delete [] block;
 	}
 
 	file.close();
+
+
+	/* identify blocks in the file that we will encrypt */
+	std::vector<std::shared_ptr<RewriteBlock>> rewriteBlocks;
+
+	if (!targetDEPEnabled) // encrypt entry point (only possible when DEP is off)
+		rewriteBlocks.push_back(std::shared_ptr<RewriteBlock>(new EntryPointRewriteBlock(&peFile)));
+
+	for (auto isec = sectionContents.begin(); isec != sectionContents.end(); isec++) // encrypt sections
+	{
+		auto& sec = *isec;
+		if (sec->name.compare(".text") == 0 ||
+			sec->name.compare(".data") == 0)
+			rewriteBlocks.push_back(std::shared_ptr<RewriteBlock>(new PeSectionRewriteBlock(sec)));
+	}
+
+
+	unsigned int iatRVA = peHeader.getIddIatRva();
+	unsigned int iatSize = peHeader.getIddIatSize();
+
+	if (iatRVA && iatSize)
+	{
+		for (auto isec = sectionContents.begin(); isec != sectionContents.end(); isec++) // encrypt IAT
+		{
+			auto& sec = *isec;
+			if (iatRVA < sec->RVA || iatRVA >= (sec->RVA + sec->size))
+				continue;
+
+			// encrypt the table itself
+			unsigned int iatOffset = iatRVA - sec->RVA;
+			auto block = new PeSectionRewriteBlock(sec, iatOffset, iatSize);
+			rewriteBlocks.push_back(std::shared_ptr<RewriteBlock>(block));
+
+			// encrypt the names
+			unsigned int lowestNameRVA = 0xFFFFFFFF;
+			unsigned int highestNameRVA = 0;
+			for (unsigned int imp = iatOffset; imp < iatOffset + iatSize; imp += 4)
+			{
+				unsigned int temp;
+				if (!getData(sec->data, imp, temp))
+					break;
+				if (temp == 0) continue;
+				else if (temp < lowestNameRVA) lowestNameRVA = temp;
+				else if (temp > highestNameRVA) highestNameRVA = temp;
+			}
+
+			if (lowestNameRVA >= sec->RVA && highestNameRVA <= (sec->RVA + sec->size))
+			{
+				auto block = new PeSectionRewriteBlock(sec, lowestNameRVA - sec->RVA, highestNameRVA - sec->RVA);
+				rewriteBlocks.push_back(std::shared_ptr<RewriteBlock>(block));
+			}
+
+			//unsigned int characteristics = peHeader.getCharacteristics(sec->index);
+			//if (!(characteristics & IMAGE_SCN_MEM_WRITE))
+				//peHeader.setCharacteristics(sec->index, characteristics | IMAGE_SCN_MEM_WRITE);
+
+			break;
+		}
+	}
 
 	/*
 		do all of the relocs within the binary itself.
@@ -142,7 +299,7 @@ void rebaseExecutable()
 		return;
 	}
 
-	unsigned int relocDelta = 0x10000 - requestedBase;
+	int relocDelta = 0x10000 - requestedBase;
 
 	auto& reloc = peFile.relocDir();
 	for (unsigned int rel = 0; rel < reloc.calcNumberOfRelocations(); rel++)
@@ -151,11 +308,13 @@ void rebaseExecutable()
 		unsigned int relocBlockSize = reloc.getSizeOfBlock(rel);
 		unsigned int relocBlockCount = reloc.calcNumberOfRelocationData(rel);
 
-		PeSectionContents* sc = nullptr;
-		for (auto sec = sectionContents.begin(); sec != sectionContents.end(); sec++)
+		std::shared_ptr<PeSectionContents> sc = nullptr;
+		for (auto isec = sectionContents.begin(); isec != sectionContents.end(); isec++)
 		{
-			if (relocBlockRVA < sec->RVA || relocBlockRVA >= (sec->RVA + sec->size)) continue;
-			sc = &(*sec);
+			auto& sec = *isec;
+			if (relocBlockRVA < sec->RVA || relocBlockRVA >= (sec->RVA + sec->size))
+				continue;
+			sc = sec;
 			break;
 		}
 
@@ -190,65 +349,74 @@ void rebaseExecutable()
 		}
 	}
 
-	/* pack sections */
-	int packDelta = (0x10000 - 0xFFFF0000);
+	/* pack blocks */
+	unsigned int packDelta = (0x10000 - 0xFFFF0000);
 	const unsigned int dataSize = 4;
 	const unsigned int chunkSize = 1024 * dataSize;
-	std::vector<PackedChunk> packedChunks;
-	for (auto sec = sectionContents.begin(); sec != sectionContents.end(); sec++)
-	{
-		if (sec->canPack)
-		{
-			unsigned int chunks = (sec->size / chunkSize);
-			for (unsigned int chunk = 0; chunk < chunks; chunk++)
-			{
-				unsigned int chunkStart = chunk * chunkSize;
-				unsigned int chunkEnd = chunkStart + chunkSize;
-				if (chunkStart >= sec->virtualSize) break;
-				if (chunkEnd >= sec->virtualSize) chunkEnd = sec->virtualSize - 1;
+	std::vector<PackedBlock> packedBlocks;
 
-				PackedChunk pc;
-				pc.RVA = chunkStart + sec->RVA;
-				ZeroMemory(&pc.packedEntry[0], sizeof(pc.packedEntry));
-				for (unsigned int offset = chunkStart; offset <= chunkEnd - dataSize; offset += dataSize)
-				{
-					int original;
-					if (!getData(sec->data, offset, original)) continue;
-					if (!putData(sec->data, offset, original - packDelta)) continue;
-					pc.packedEntry[offset - chunkStart] = true;
-				}
-				packedChunks.push_back(pc);
+	for (auto iblock = rewriteBlocks.begin(); iblock != rewriteBlocks.end(); iblock++)
+	{
+		auto& block = *iblock;
+		unsigned int rva, offset;
+		if (!block->getFirstEntryLoc(dataSize, rva, offset))
+			continue;
+		packedBlocks.push_back(PackedBlock(rva));
+
+		do
+		{
+			if (!block->decrementEntry(offset, packDelta))
+				break;
+
+			auto packedBlock = &packedBlocks[packedBlocks.size() - 1];
+			auto rvaOffset = static_cast<unsigned short>((rva - packedBlock->beginRVA));
+			if (rvaOffset >= chunkSize)
+			{
+				rvaOffset = 0;
+				packedBlocks.push_back(PackedBlock(rva));
+				packedBlock = &packedBlocks[packedBlocks.size() - 1];
 			}
+
+			packedBlock->offsets.push_back(rvaOffset);
 		}
+		while (block->getNextEntryLoc(dataSize, offset, rva, offset));
 	}
 
 	/* clear relocations */
-	while (reloc.calcNumberOfRelocations()) reloc.removeRelocation(0);
+	while (reloc.calcNumberOfRelocations())
+		reloc.removeRelocation(0);
 
 	/* fill new reloc table */
-	for (auto pc = packedChunks.begin(); pc != packedChunks.end(); pc++)
+	for (auto ipb = packedBlocks.begin(); ipb != packedBlocks.end(); ipb++)
 	{
+		auto& packedBlock = *ipb;
+
+		unsigned int rel = reloc.calcNumberOfRelocations();
 		reloc.addRelocation();
-		unsigned int rel = reloc.calcNumberOfRelocations() - 1;
-		unsigned int size = 0;
-		for (unsigned short offset = 0; offset < 4096; offset++)
+
+		for (auto offset = packedBlock.offsets.begin(); offset != packedBlock.offsets.end(); offset++)
+			reloc.addRelocationData(rel, (IMAGE_REL_BASED_HIGHLOW << 12) | (*offset & 0x0FFF));
+
+		unsigned int relocSize = (packedBlock.offsets.size() * sizeof(unsigned short)) + 8; // + 8 for the header size
+		if (packedBlock.offsets.size() % 2 == 1)
 		{
-			if (pc->packedEntry[offset])
-			{
-				reloc.addRelocationData(rel, (IMAGE_REL_BASED_HIGHLOW << 12) | (offset & 0x0FFF));
-				size++;
-			}
+			// align on 4 byte boundary
+			reloc.addRelocationData(rel, 0);
+			relocSize += sizeof(unsigned short);
 		}
 
-		reloc.setVirtualAddress(rel, pc->RVA);
-		reloc.setSizeOfBlock(rel, (size * 2) + 8);
+		// update the header
+		reloc.setVirtualAddress(rel, packedBlock.beginRVA);
+		reloc.setSizeOfBlock(rel, relocSize);
 	}
 
 	/* update section metadata & contents for relocs */
 	bool updatedRelocs = false;
-	for (auto sec = sectionContents.begin(); sec != sectionContents.end(); sec++)
+	for (auto isec = sectionContents.begin(); isec != sectionContents.end(); isec++)
 	{
-		if (sec->RVA != rvaOfReloc) continue;
+		auto& sec = *isec;
+		if (sec->RVA != rvaOfReloc)
+			continue;
 		//if (sec->size != sizeOfReloc) continue;
 
 		sec->data.clear();
@@ -281,8 +449,9 @@ void rebaseExecutable()
     peHeader.writeSections(newName);
 
 	/* write all section contents out to new file */
-	for (auto sec = sectionContents.begin(); sec != sectionContents.end(); sec++)
+	for (auto isec = sectionContents.begin(); isec != sectionContents.end(); isec++)
 	{
+		auto& sec = *isec;
 		if (sec->size)
 			peHeader.writeSectionData(newName, sec->index, sec->data);
 	}
