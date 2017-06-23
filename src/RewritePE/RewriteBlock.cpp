@@ -1,13 +1,14 @@
 #include "PeLibInclude.h"
 
 #include "RewriteBlock.h"
+#include "PeRecompiler.h"
 #include "VectorUtils.h"
 
 
-EntryPointRewriteBlock::EntryPointRewriteBlock(PeLib::PeFile32* _header)
+EntryPointRewriteBlock::EntryPointRewriteBlock(std::shared_ptr<PeLib::PeFile32> _header)
 	: header(_header) { }
 
-bool EntryPointRewriteBlock::getFirstEntryLoc(unsigned int size, unsigned int &firstEntryRVA, unsigned int &firstEntryOffset) const
+bool EntryPointRewriteBlock::getFirstEntryLoc(uint32_t size, uint32_t &firstEntryRVA, uint32_t &firstEntryOffset) const
 {
 	if (size > sizeof(this->header->peHeader().getAddressOfEntryPoint()))
 		return false;
@@ -18,14 +19,14 @@ bool EntryPointRewriteBlock::getFirstEntryLoc(unsigned int size, unsigned int &f
 	return true;
 }
 
-bool EntryPointRewriteBlock::getNextEntryLoc(unsigned int size, unsigned int lastEntryOffset, unsigned int &nextEntryRVA, unsigned int &nextEntryOffset) const
+bool EntryPointRewriteBlock::getNextEntryLoc(uint32_t size, uint32_t lastEntryOffset, uint32_t &nextEntryRVA, uint32_t &nextEntryOffset) const
 {
 	return false;
 }
 
-bool EntryPointRewriteBlock::decrementEntry(unsigned int offset, unsigned int value)
+bool EntryPointRewriteBlock::decrementEntry(uint32_t offset, uint32_t value)
 {
-	unsigned int original = this->header->peHeader().getAddressOfEntryPoint();
+	uint32_t original = this->header->peHeader().getAddressOfEntryPoint();
 	this->header->peHeader().setAddressOfEntryPoint(static_cast<PeLib::dword>(original - value));
 	return true;
 }
@@ -34,21 +35,21 @@ bool EntryPointRewriteBlock::decrementEntry(unsigned int offset, unsigned int va
 
 PeSectionRewriteBlock::PeSectionRewriteBlock(std::shared_ptr<PeSectionContents> _sec)
 	: sec(_sec), startOffset(0), subSize(_sec->size) { }
-PeSectionRewriteBlock::PeSectionRewriteBlock(std::shared_ptr<PeSectionContents> _sec, unsigned int _startOffset, unsigned int _subSize)
+PeSectionRewriteBlock::PeSectionRewriteBlock(std::shared_ptr<PeSectionContents> _sec, uint32_t _startOffset, uint32_t _subSize)
 	: sec(_sec), startOffset(_startOffset), subSize(_startOffset + _subSize)
 {
 	if (this->subSize > this->sec->size)
 		this->subSize = this->sec->size;
 }
 
-bool PeSectionRewriteBlock::getFirstEntryLoc(unsigned int size, unsigned int &firstEntryRVA, unsigned int &firstEntryOffset) const
+bool PeSectionRewriteBlock::getFirstEntryLoc(uint32_t size, uint32_t &firstEntryRVA, uint32_t &firstEntryOffset) const
 {
 	if (this->startOffset + size >= this->subSize)
 		return false;
 	return this->getNextEntryLoc(0, this->startOffset, firstEntryRVA, firstEntryOffset);
 }
 
-bool PeSectionRewriteBlock::getNextEntryLoc(unsigned int size, unsigned int lastEntryOffset, unsigned int &nextEntryRVA, unsigned int &nextEntryOffset) const
+bool PeSectionRewriteBlock::getNextEntryLoc(uint32_t size, uint32_t lastEntryOffset, uint32_t &nextEntryRVA, uint32_t &nextEntryOffset) const
 {
 	if (lastEntryOffset + size >= this->subSize)
 		return false;
@@ -58,9 +59,9 @@ bool PeSectionRewriteBlock::getNextEntryLoc(unsigned int size, unsigned int last
 	return true;
 }
 
-bool PeSectionRewriteBlock::decrementEntry(unsigned int offset, unsigned int value)
+bool PeSectionRewriteBlock::decrementEntry(uint32_t offset, uint32_t value)
 {
-	unsigned int original;
+	uint32_t original;
 	if (!getData(this->sec->data, offset, original)) return false;
 	if (!putData(this->sec->data, offset, (original - value) )) return false;
 	return true;

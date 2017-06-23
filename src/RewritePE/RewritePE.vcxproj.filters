@@ -15,6 +15,9 @@
     <ClCompile Include="RewriteBlock.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="PeRecompiler.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="PeLibInclude.h">
@@ -24,6 +27,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="VectorUtils.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="PeRecompiler.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

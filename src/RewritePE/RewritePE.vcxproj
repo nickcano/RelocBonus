@@ -84,11 +84,13 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="PeRecompiler.cpp" />
     <ClCompile Include="RewriteBlock.cpp" />
     <ClCompile Include="RewritePE.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="PeLibInclude.h" />
+    <ClInclude Include="PeRecompiler.h" />
     <ClInclude Include="RewriteBlock.h" />
     <ClInclude Include="VectorUtils.h" />
   </ItemGroup>

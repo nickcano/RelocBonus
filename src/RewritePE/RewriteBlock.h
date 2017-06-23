@@ -1,45 +1,43 @@
+#pragma once
+
+#include <stdint.h>
 #include <memory>
 namespace PeLib { class PeFile32; };
 
-struct PeSectionContents
-{
-	std::string name;
-	std::vector<PeLib::byte> data;
-	unsigned int index, RVA, size, virtualSize, rawPointer;
-};
+struct PeSectionContents;
 
 class RewriteBlock // defines a block that we will rewrite (encrypt) on disk
 {
 public:
-	virtual bool getFirstEntryLoc(unsigned int size, unsigned int &firstEntryRVA, unsigned int &firstEntryOffset) const = 0;
-	virtual bool getNextEntryLoc(unsigned int size, unsigned int lastEntryOffset, unsigned int &nextEntryRVA, unsigned int &nextEntryOffset) const = 0;
-	virtual bool decrementEntry(unsigned int offset, unsigned int value) = 0;
+	virtual bool getFirstEntryLoc(uint32_t size, uint32_t &firstEntryRVA, uint32_t &firstEntryOffset) const = 0;
+	virtual bool getNextEntryLoc(uint32_t size, uint32_t lastEntryOffset, uint32_t &nextEntryRVA, uint32_t &nextEntryOffset) const = 0;
+	virtual bool decrementEntry(uint32_t offset, uint32_t value) = 0;
 };
 
 class EntryPointRewriteBlock : public RewriteBlock
 {
 public:
-	EntryPointRewriteBlock(PeLib::PeFile32* _header);
+	EntryPointRewriteBlock(std::shared_ptr<PeLib::PeFile32> _header);
 
-	virtual bool getFirstEntryLoc(unsigned int size, unsigned int &firstEntryRVA, unsigned int &firstEntryOffset) const;
-	virtual bool getNextEntryLoc(unsigned int size, unsigned int lastEntryOffset, unsigned int &nextEntryRVA, unsigned int &nextEntryOffset) const;
-	virtual bool decrementEntry(unsigned int offset, unsigned int value);
+	virtual bool getFirstEntryLoc(uint32_t size, uint32_t &firstEntryRVA, uint32_t &firstEntryOffset) const;
+	virtual bool getNextEntryLoc(uint32_t size, uint32_t lastEntryOffset, uint32_t &nextEntryRVA, uint32_t &nextEntryOffset) const;
+	virtual bool decrementEntry(uint32_t offset, uint32_t value);
 
 private:
-	PeLib::PeFile32* header;
+	std::shared_ptr<PeLib::PeFile32> header;
 };
 
 class PeSectionRewriteBlock : public RewriteBlock
 {
 public:
 	PeSectionRewriteBlock(std::shared_ptr<PeSectionContents> _sec);
-	PeSectionRewriteBlock(std::shared_ptr<PeSectionContents> _sec, unsigned int _startOffset, unsigned int _subSize);
+	PeSectionRewriteBlock(std::shared_ptr<PeSectionContents> _sec, uint32_t _startOffset, uint32_t _subSize);
 
-	virtual bool getFirstEntryLoc(unsigned int size, unsigned int &firstEntryRVA, unsigned int &firstEntryOffset) const;
-	virtual bool getNextEntryLoc(unsigned int size, unsigned int lastEntryOffset, unsigned int &nextEntryRVA, unsigned int &nextEntryOffset) const;
-	virtual bool decrementEntry(unsigned int offset, unsigned int value);
+	virtual bool getFirstEntryLoc(uint32_t size, uint32_t &firstEntryRVA, uint32_t &firstEntryOffset) const;
+	virtual bool getNextEntryLoc(uint32_t size, uint32_t lastEntryOffset, uint32_t &nextEntryRVA, uint32_t &nextEntryOffset) const;
+	virtual bool decrementEntry(uint32_t offset, uint32_t value);
 
 private:
-	unsigned int startOffset, subSize;
+	uint32_t startOffset, subSize;
 	std::shared_ptr<PeSectionContents> sec;
 };
