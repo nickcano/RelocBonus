@@ -28,13 +28,13 @@ bool PeRecompiler::loadInputFile()
 	auto peFile = std::make_shared<PeLib::PeFile32>(this->inputFileName);
 	if (peFile->readMzHeader() != NO_ERROR)
 	{
-		this->errorStream << "Failed to read MzHeader!" << std::endl;
+		this->errorStream << "Failed to read MzHeader: " << this->inputFileName << std::endl;
 		return false;
 	}
 
 	if (peFile->readPeHeader() != NO_ERROR)
 	{
-		this->errorStream << "Failed to read PeHeader!" << std::endl;
+		this->errorStream << "Failed to read PeHeader: " << this->inputFileName << std::endl;
 		return false;
 	}
 
