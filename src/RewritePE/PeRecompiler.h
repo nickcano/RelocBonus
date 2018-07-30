@@ -24,6 +24,8 @@ public:
 	);
 	~PeRecompiler() {}
 
+	void useWindows10Attack(bool win10);
+
 	bool loadInputFile();
 	bool loadInputSections();
 
@@ -36,6 +38,7 @@ public:
 	bool writeOutputFile();
 
 private:
+	bool shouldUseWin10Attack;
 	std::ostream &infoStream, &errorStream;
 	std::string inputFileName, outputFileName;
 	std::shared_ptr<PeLib::PeFile32> peFile;

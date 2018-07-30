@@ -3,6 +3,7 @@
 #include "PeRecompiler.h"
 #include "VectorUtils.h"
 #include "RewriteBlock.h"
+#include "ASLRPreselectionStub.h"
 
 #include <Windows.h>
 
@@ -16,12 +17,18 @@ PeRecompiler::PeRecompiler(
 	const std::string &_inputFileName, const std::string &_outputFileName
 )
 	: infoStream(_infoStream), errorStream(_errorStream),
-	inputFileName(_inputFileName), outputFileName(_outputFileName)
+	inputFileName(_inputFileName), outputFileName(_outputFileName),
+	shouldUseWin10Attack(false)
 {
 	this->infoStream << std::hex;
 	this->errorStream << std::hex;
 }
 
+
+void PeRecompiler::useWindows10Attack(bool win10)
+{
+	this->shouldUseWin10Attack = win10;
+}
 
 bool PeRecompiler::loadInputFile()
 {
@@ -116,21 +123,47 @@ bool PeRecompiler::performOnDiskRelocations()
 		return false;
 	}
 
+	this->infoStream << "Preparing header for obfuscation" << std::endl;
+
 	/*
 		now, our first step is to remove the ASLR flag and request a base of TRICKY_BASE_ADDRESS.
 		this actually causes us to load at ACTUALIZED_BASE_ADDRESS, though, so we will relocate to there.
 	*/
-	auto newCharacteristics = (characteristics & ~IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE);
-	peHeader.setDllCharacteristics(newCharacteristics);
-	this->infoStream << "Stripped IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE flag" << std::endl;
-	this->infoStream << "\tOld Characteristics: 0x" << characteristics << std::endl;
-	this->infoStream << "\tNew Characteristics: 0x" << newCharacteristics << std::endl;
+	if (!this->shouldUseWin10Attack)
+	{
+		auto newCharacteristics = (characteristics & ~IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE);
+		peHeader.setDllCharacteristics(newCharacteristics);
+		this->infoStream << "\tStripped IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE flag" << std::endl;
+		this->infoStream << "\t\tOld Characteristics: 0x" << characteristics << std::endl;
+		this->infoStream << "\t\tNew Characteristics: 0x" << newCharacteristics << std::endl;
+	}
+	else if (characteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE)
+	{
+		this->infoStream << "\t[Win10 Attack] Leaving IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE set" << std::endl;
+	}
+	else
+	{
+		auto newCharacteristics = (characteristics & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE);
+		peHeader.setDllCharacteristics(newCharacteristics);
+		this->infoStream << "\t[Win10 Attack] Added IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE flag" << std::endl;
+		this->infoStream << "\t\tOld Characteristics: 0x" << characteristics << std::endl;
+		this->infoStream << "\t\tNew Characteristics: 0x" << newCharacteristics << std::endl;
+	}
 
-	peHeader.setImageBase(TRICKY_BASE_ADDRESS);
-	this->infoStream << "Changed ImageBase to 0x" << TRICKY_BASE_ADDRESS << " (was 0x" << requestedBase << ")" << std::endl;
+
+	if (!this->shouldUseWin10Attack)
+	{
+		peHeader.setImageBase(TRICKY_BASE_ADDRESS);
+		this->infoStream << "\tChanged ImageBase to 0x" << TRICKY_BASE_ADDRESS << " (was 0x" << requestedBase << ")" << std::endl;
+	}
+	else
+	{
+		this->infoStream << "\t[Win10 Attack] Leaving ImageBase as 0x" << requestedBase << std::endl;
+	}
 
 
-	/* now let's relocate everything to 0x10000 */
+
+	/* now let's relocate everything to 0x00010000 */
 	uint32_t numberOfRelocsPerformed = 0;
 	auto& reloc = this->peFile->relocDir();
 	const int32_t relocDelta = ACTUALIZED_BASE_ADDRESS - requestedBase;
@@ -173,14 +206,14 @@ bool PeRecompiler::performOnDiskRelocations()
 		}
 	}
 
-	this->infoStream << "Parsed original reloc table and applied " << std::dec << numberOfRelocsPerformed << std::hex << " relocations" << std::endl;
-	this->infoStream << "\tDelta of 0x" << relocDelta << " applied, as binary will load at 0x" << ACTUALIZED_BASE_ADDRESS << std::endl;
+	this->infoStream << "\tParsed original reloc table and applied " << std::dec << numberOfRelocsPerformed << std::hex << " relocations" << std::endl;
+	this->infoStream << "\t\tDelta of 0x" << relocDelta << " applied, as binary will load at 0x" << ACTUALIZED_BASE_ADDRESS << std::endl;
 
 	/* we also need to clear out the original reloc table */
 	while (reloc.calcNumberOfRelocations())
 		reloc.removeRelocation(0);
 
-	this->infoStream << "Cleared original reloc table" << std::endl;
+	this->infoStream << "\tCleared original reloc table" << std::endl;
 
 	return true;
 }
@@ -189,8 +222,16 @@ bool PeRecompiler::rewriteHeader()
 {
 	if (!this->doRewriteReadyCheck())
 		return false;
-	this->rewriteBlocks.push_back(std::shared_ptr<RewriteBlock>(new EntryPointRewriteBlock(this->peFile)));
-	this->infoStream << "Rewrote header entrypoint" << std::endl;
+
+	if (!this->shouldUseWin10Attack)
+	{
+		this->rewriteBlocks.push_back(std::shared_ptr<RewriteBlock>(new EntryPointRewriteBlock(this->peFile)));
+		this->infoStream << "Rewrote header entrypoint" << std::endl;
+	}
+	else
+	{
+		this->infoStream << "[Win10 Attack] Skipping header entrypoint rewrite" << std::endl;
+	}
 	return true;
 }
 
@@ -205,12 +246,12 @@ bool PeRecompiler::rewriteSection(const std::string &name)
 		if (sec->name.compare(name) == 0)
 		{
 			this->rewriteBlocks.push_back(std::shared_ptr<RewriteBlock>(new PeSectionRewriteBlock(sec)));
-			this->infoStream << "Rewrote " << name << " section at RVA: 0x" << sec->RVA << std::endl;
+			this->infoStream << "\tRewrote " << name << " section at RVA: 0x" << sec->RVA << std::endl;
 			return true;
 		}
 	}
 
-	this->infoStream << "Seemingly no section named " << name << " to rewrite" << std::endl;
+	this->infoStream << "\tSeemingly no section named " << name << " to rewrite" << std::endl;
 	return true;
 }
 
@@ -219,23 +260,31 @@ bool PeRecompiler::rewriteImports()
 	if (!this->doRewriteReadyCheck())
 		return false;
 
+	if (this->shouldUseWin10Attack)
+	{
+		this->infoStream << "[Win10 Attack] Skipping import obfuscation" << std::endl;
+		return true;
+	}
+
+
 	auto& peHeader = this->peFile->peHeader();
+	this->infoStream << "Obfuscating imports" << std::endl;
 
 	/* rewrite Import Address Table */
 	uint32_t iatRVA = peHeader.getIddIatRva();
 	uint32_t iatSize = peHeader.getIddIatSize();
 	if (!this->rewriteSubsectionByRVA(iatRVA, iatSize))
-		this->infoStream << "Seemingly no Import Address Table to rewrite" << std::endl;
+		this->infoStream << "\tSeemingly no Import Address Table to rewrite" << std::endl;
 	else
-		this->infoStream << "Rewrote Import Address Table from RVA 0x" << iatRVA << " to 0x" << (iatRVA + iatSize) << std::endl;
+		this->infoStream << "\tRewrote Import Address Table from RVA 0x" << iatRVA << " to 0x" << (iatRVA + iatSize) << std::endl;
 
 	/* rewrite Import Directory Table */
 	uint32_t importRVA = peHeader.getIddImportRva();
 	uint32_t importSize = peHeader.getIddImportSize();
 	if (!this->rewriteSubsectionByRVA(importRVA, importSize))
-		this->infoStream << "Seemingly no Import Table to rewrite" << std::endl;
+		this->infoStream << "\tSeemingly no Import Table to rewrite" << std::endl;
 	else
-		this->infoStream << "Rewrote Import Table from RVA 0x" << importRVA << " to 0x" << (importRVA + importSize) << std::endl;
+		this->infoStream << "\tRewrote Import Table from RVA 0x" << importRVA << " to 0x" << (importRVA + importSize) << std::endl;
 
 	/* rewrite Import Hints/Names & Dll Names Table */
 	auto iatSec = getSectionByRVA(iatRVA, iatSize);
@@ -256,13 +305,14 @@ bool PeRecompiler::rewriteImports()
 		}
 
 		if (!this->rewriteSubsectionByRVA(lowestNameRVA, highestNameRVA - lowestNameRVA))
-			this->infoStream << "Seemingly no Import Hints/Names & Dll Names Table to rewrite" << std::endl;
+			this->infoStream << "\tSeemingly no Import Hints/Names & Dll Names Table to rewrite" << std::endl;
 		else
-			this->infoStream << "Rewrote Import Hints/Names & Dll Names Table from RVA 0x" << lowestNameRVA << " to 0x" << highestNameRVA << std::endl;
+			this->infoStream << "\tRewrote Import Hints/Names & Dll Names Table from RVA 0x" << lowestNameRVA << " to 0x" << highestNameRVA << std::endl;
 	}
 
 	return true;
 }
+
 
 bool PeRecompiler::writeOutputFile()
 {
@@ -274,6 +324,8 @@ bool PeRecompiler::writeOutputFile()
 		this->errorStream << "Section contents must be loaded before writing output!" << std::endl;
 		return false;
 	}
+
+	this->infoStream << "Generating output file" << std::endl;
 
 	auto& reloc = this->peFile->relocDir();
 	auto& peHeader = this->peFile->peHeader();
@@ -292,7 +344,8 @@ bool PeRecompiler::writeOutputFile()
 	};
 	std::vector<PackedBlock> packedBlocks;
 
-	const uint32_t packDelta = (ACTUALIZED_BASE_ADDRESS - TRICKY_BASE_ADDRESS);
+	const uint32_t requestedBase = peHeader.getImageBase();
+	const uint32_t packDelta = (ACTUALIZED_BASE_ADDRESS - requestedBase);
 	const uint32_t dataSize = 4;
 	const uint32_t chunkSize = 1024 * dataSize;
 	for (auto iblock = this->rewriteBlocks.begin(); iblock != this->rewriteBlocks.end(); iblock++)
@@ -328,7 +381,7 @@ bool PeRecompiler::writeOutputFile()
 	/* now that that's done, we actually need to generate a reloc table... */
 	if (packedBlocks.size())
 	{
-		this->infoStream << "Applied all rewrites to actual file contents" << std::endl;
+		this->infoStream << "\tApplied all rewrites to actual file contents" << std::endl;
 
 		if (reloc.calcNumberOfRelocations())
 		{
@@ -362,7 +415,7 @@ bool PeRecompiler::writeOutputFile()
 			reloc.setSizeOfBlock(rel, relocSize);
 		}
 
-		this->infoStream << "Generated reloc table for rewrites with " << std::dec << packedBlocks.size() << std::hex << " entries" << std::endl;
+		this->infoStream << "\tGenerated reloc table for rewrites with " << std::dec << packedBlocks.size() << std::hex << " entries" << std::endl;
 	}
 
 
@@ -373,7 +426,7 @@ bool PeRecompiler::writeOutputFile()
 	auto relocSec = this->getSectionByRVA(peHeader.getIddBaseRelocRva(), 4);
 	if (!relocSec)
 	{
-		std::cerr << "Failed to locate reloc section!" << std::endl;
+		this->errorStream << "Failed to locate reloc section!" << std::endl;
 		return false;
 	}
 
@@ -385,23 +438,79 @@ bool PeRecompiler::writeOutputFile()
 		relocSec->data.push_back(0x00);
 	peHeader.setSizeOfRawData(relocSec->index, relocSec->data.size());
 
-	this->infoStream << "Updated PE header with new reloc meta-data" << std::endl;
+	this->infoStream << "\tUpdated PE header with new reloc meta-data" << std::endl;
 
 	/* validate the binary since we changed some sections */
 	peHeader.makeValid(mzHeader.getAddressOfPeHeader());
+	this->infoStream << "\tValidated new PE header" << std::endl;
 
-	this->infoStream << "Validated new PE header" << std::endl;
+	/* inject preselection shellcode, if needed */
+	if (this->shouldUseWin10Attack)
+	{
+		this->infoStream << "\t[Win10 Attack] Injecting ASLR preselection shellcode" << std::endl;
+
+		void* originalEntrypoint = (void*)peHeader.getAddressOfEntryPoint();
+		this->infoStream << "\t\tOriginal EP: 0x" << std::hex << originalEntrypoint << std::endl;
+
+		void* stub;
+		size_t stubLen;
+		if (!prepareStub(originalEntrypoint, stub, stubLen, this->infoStream, this->errorStream))
+		{
+			this->errorStream << "Failed to inject ASLR preselection shellcode!" << std::endl;
+			return false;
+		}
+
+		peHeader.addSection(".presel", stubLen);
+
+		/* re-validate the binary since we added a section */
+		peHeader.makeValid(mzHeader.getAddressOfPeHeader());
+		this->infoStream << "\t\tRevalidated new PE header" << std::endl;
+
+		/* point the entrypoint at the shellcode */
+		auto rvaOfNewSection = peHeader.getVirtualAddress(peHeader.getNumberOfSections() - 1);
+		auto offsetOfNewSection = peHeader.rvaToOffset(rvaOfNewSection);
+		this->infoStream << "\t\tShellcode section RVA: 0x" << std::hex << rvaOfNewSection << std::endl;
+		this->infoStream << "\t\tShellcode section Offset: 0x" << std::hex << offsetOfNewSection << std::endl;
+		peHeader.setAddressOfEntryPoint(rvaOfNewSection);
+		this->infoStream << "\t\tEP updated to RVA" << std::endl;
+
+		/* make the new section executable */
+		peHeader.setCharacteristics(peHeader.getNumberOfSections() - 1,
+			PeLib::PELIB_IMAGE_SCN_MEM_EXECUTE |
+			PeLib::PELIB_IMAGE_SCN_MEM_WRITE |
+			PeLib::PELIB_IMAGE_SCN_MEM_READ |
+			PeLib::PELIB_IMAGE_SCN_CNT_INITIALIZED_DATA |
+			PeLib::PELIB_IMAGE_SCN_CNT_CODE);
+
+		/* prepare the section contents */
+		auto sc = std::make_shared<PeSectionContents>();
+		sc->index = peHeader.getNumberOfSections() - 1;
+		sc->RVA = peHeader.getVirtualAddress(sc->index);
+		sc->size = peHeader.getSizeOfRawData(sc->index);
+		sc->rawPointer = peHeader.getPointerToRawData(sc->index);
+		sc->virtualSize = peHeader.getVirtualSize(sc->index);
+		sc->name = peHeader.getSectionName(sc->index);
+
+		this->infoStream << "\t\tInjected Section " << sc->name << std::endl;
+		this->infoStream << "\t\t\tVirtual Size: 0x" << sc->virtualSize << std::endl;
+		this->infoStream << "\t\t\tRVA: 0x" << sc->RVA << std::endl;
+		this->infoStream << "\t\t\tRaw Size: 0x" << sc->size << std::endl;
+		this->infoStream << "\t\t\tRaw Pointer: 0x" << sc->rawPointer << std::endl;
+
+		pushBytes((const char*)stub, stubLen, sc->data);
+		this->sectionContents.push_back(sc);
+	}
 	
 	/* write original MZ and PE headers to new binary */
 	mzHeader.write(this->outputFileName, 0);
-	this->infoStream << "Wrote MZ Header to output file" << std::endl;
+	this->infoStream << "\tWrote MZ Header to output file" << std::endl;
 
     peHeader.write(this->outputFileName, mzHeader.getAddressOfPeHeader());
-	this->infoStream << "Wrote PE Header to output file" << std::endl;
+	this->infoStream << "\tWrote PE Header to output file" << std::endl;
         
 	/* write section meta-data and contents to new binary */
     peHeader.writeSections(this->outputFileName);
-	this->infoStream << "Wrote PE Section meta-data to output file" << std::endl;
+	this->infoStream << "\tWrote PE Section meta-data to output file" << std::endl;
 
 	for (auto isec = this->sectionContents.begin(); isec != this->sectionContents.end(); isec++)
 	{
@@ -409,7 +518,7 @@ bool PeRecompiler::writeOutputFile()
 		if (sec->size)
 			peHeader.writeSectionData(this->outputFileName, sec->index, sec->data);
 	}
-	this->infoStream << "Wrote PE Section Contents to output file" << std::endl;
+	this->infoStream << "\tWrote PE Section Contents to output file" << std::endl;
 
 	return true;
 }
@@ -428,8 +537,11 @@ bool PeRecompiler::doRewriteReadyCheck()
 
 	if (this->peFile->relocDir().calcNumberOfRelocations() || this->peFile->peHeader().getImageBase() != TRICKY_BASE_ADDRESS)
 	{
-		this->errorStream << "On-disk relocations must be performed before doing rewrites!" << std::endl;
-		return false;
+		if (!this->shouldUseWin10Attack)
+		{
+			this->errorStream << "On-disk relocations must be performed before doing rewrites!" << std::endl;
+			return false;
+		}
 	}
 
 	return true;

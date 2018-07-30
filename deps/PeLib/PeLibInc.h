@@ -13,11 +13,11 @@
 #ifndef STD_H
 #define STD_H
 
-#ifdef _MSC_VER
+/*#ifdef _MSC_VER
 	#ifndef for
 		#define for if (0) {} else for
 	#endif
-#endif
+#endif*/
 
 #include <algorithm>
 #include <climits>

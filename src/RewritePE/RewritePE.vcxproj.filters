@@ -7,6 +7,9 @@
     <Filter Include="Header Files">
       <UniqueIdentifier>{014fc30d-f552-47c9-9ec5-3f28d0b76cfe}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Header Files\ASLR Preselection Shellcode">
+      <UniqueIdentifier>{4bd6785c-f129-4b65-9519-1d53eda3f7c1}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="RewritePE.cpp">
@@ -31,6 +34,15 @@
     </ClInclude>
     <ClInclude Include="PeRecompiler.h">
       <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ASLRPreselectionStub.h">
+      <Filter>Header Files\ASLR Preselection Shellcode</Filter>
+    </ClInclude>
+    <ClInclude Include="LdrDefs.h">
+      <Filter>Header Files\ASLR Preselection Shellcode</Filter>
+    </ClInclude>
+    <ClInclude Include="ShellcodeMacros.h">
+      <Filter>Header Files\ASLR Preselection Shellcode</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>
