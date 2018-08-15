@@ -4,7 +4,7 @@
 #include <memory>
 namespace PeLib { class PeFile32; };
 
-struct PeSectionContents;
+class PeSectionContents;
 
 class RewriteBlock // defines a block that we will rewrite (encrypt) on disk
 {
@@ -18,6 +18,19 @@ class EntryPointRewriteBlock : public RewriteBlock
 {
 public:
 	EntryPointRewriteBlock(std::shared_ptr<PeLib::PeFile32> _header);
+
+	virtual bool getFirstEntryLoc(uint32_t size, uint32_t &firstEntryRVA, uint32_t &firstEntryOffset) const;
+	virtual bool getNextEntryLoc(uint32_t size, uint32_t lastEntryOffset, uint32_t &nextEntryRVA, uint32_t &nextEntryOffset) const;
+	virtual bool decrementEntry(uint32_t offset, uint32_t value);
+
+private:
+	std::shared_ptr<PeLib::PeFile32> header;
+};
+
+class BaseAddressRewriteBlock : public RewriteBlock
+{
+public:
+	BaseAddressRewriteBlock(std::shared_ptr<PeLib::PeFile32> _header);
 
 	virtual bool getFirstEntryLoc(uint32_t size, uint32_t &firstEntryRVA, uint32_t &firstEntryOffset) const;
 	virtual bool getNextEntryLoc(uint32_t size, uint32_t lastEntryOffset, uint32_t &nextEntryRVA, uint32_t &nextEntryOffset) const;

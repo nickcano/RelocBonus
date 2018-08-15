@@ -124,14 +124,16 @@ auto parseCommandLine(int argc, char* argv[])
 const char* usageString =
 "Usage: reloc.exe [--section=<name> | --win10 | --noImports | --rewriteHeader] input.exe output.exe\n" \
 "    --section=<name>     Rewrite section with <name>\n" \
-"    --win10              Use runtime ASLR Pteselection attack, required for targets running Windows 10\n" \
+"    --win10              Use runtime ASLR Preselection attack, required for targets running Windows 10\n" \
 "    --noImports          Don't rewrite import names or pointers\n" \
 "    --rewriteHeader      Rewrite entrypoint; incompatible with --win10 and DEP must be disabled on target machine\n" \
+"    --fixupBase          Relocate ImageBase in PE header to match actual base; DEP must be disabled on target machine" \
 "\n" \
 "Notes:\n" \
 "    - If no sections are specified, .text, .data, and .rsrc will be used\n" \
 "    - Using --win10 will remove .rsrc from the default section list, as win10 doesn't like obfuscated resources\n" \
 "    - Using --win10 will set --noImports, as the attack is incompatible with import obfuscation\n" \
+"    - For options incompatible with DEP, it must be disabled system-wide via bcdedit. Executable-level DEP configuration is applied via NtSetInformationProcess after relocs are applied." \
 "\n"\
 "Example 1 - Standard:\n" \
 "    reloc.exe malware.exe obfuscated_malware.exe\n" \
@@ -154,6 +156,7 @@ int main(int argc, char* argv[])
 	auto win10 = (cl.find("--win10") != cl.end());
 	auto noImports = (cl.find("--noImports") != cl.end()) || win10;
 	auto rewriteHeader = (cl.find("--rewriteHeader") != cl.end());
+	auto fixupBase = (cl.find("--fixupBase") != cl.end());
 
 	auto sections = cl["--section"];
 	if (sections.size() == 0)
@@ -178,6 +181,9 @@ int main(int argc, char* argv[])
 
 		/* if the target machine doesn't enforce DEP, we can re-write parts of the header (such as EntryPoint) */
 		if (rewriteHeader) if (!compiler.rewriteHeader()) break;
+
+		/* if the target machine doesn't enforce DEP, we can make BaseAddress look normal in memory */
+		if (fixupBase) if (!compiler.fixupBase()) break;
 
 		/* rewrite some sections */
 		std::cout << "Obfuscating sections" << std::endl;

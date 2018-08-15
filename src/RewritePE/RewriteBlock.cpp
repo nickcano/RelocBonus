@@ -33,6 +33,33 @@ bool EntryPointRewriteBlock::decrementEntry(uint32_t offset, uint32_t value)
 
 
 
+BaseAddressRewriteBlock::BaseAddressRewriteBlock(std::shared_ptr<PeLib::PeFile32> _header)
+	: header(_header) { }
+
+bool BaseAddressRewriteBlock::getFirstEntryLoc(uint32_t size, uint32_t &firstEntryRVA, uint32_t &firstEntryOffset) const
+{
+	if (size > sizeof(this->header->peHeader().getImageBase()))
+		return false;
+
+	// 0x18 is sizeof(Signature) + sizeof(IMAGE_FILE_HEADER), 0x1C is the offset of BaseAddress into IMAGE_OPTIONAL_HEADER
+	firstEntryRVA = this->header->mzHeader().getAddressOfPeHeader() + 0x18 + 0x1C;
+	firstEntryOffset = 0;
+	return true;
+}
+
+bool BaseAddressRewriteBlock::getNextEntryLoc(uint32_t size, uint32_t lastEntryOffset, uint32_t &nextEntryRVA, uint32_t &nextEntryOffset) const
+{
+	return false;
+}
+
+bool BaseAddressRewriteBlock::decrementEntry(uint32_t offset, uint32_t value)
+{
+	// we don't actually rewrite this before hand, so nothing to do here
+	return true;
+}
+
+
+
 PeSectionRewriteBlock::PeSectionRewriteBlock(std::shared_ptr<PeSectionContents> _sec)
 	: sec(_sec), startOffset(0), subSize(_sec->size) { }
 PeSectionRewriteBlock::PeSectionRewriteBlock(std::shared_ptr<PeSectionContents> _sec, uint32_t _startOffset, uint32_t _subSize)

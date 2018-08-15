@@ -11,6 +11,40 @@
 const uint32_t TRICKY_BASE_ADDRESS = 0xFFFF0000;
 const uint32_t ACTUALIZED_BASE_ADDRESS = 0x00010000;
 
+PeSectionContents::PeSectionContents(uint32_t index, std::shared_ptr<PeLib::PeFile32> &_header, std::ifstream &file)
+{
+	auto& peHeader = _header->peHeader();
+	this->index = index;
+	this->RVA = peHeader.getVirtualAddress(index);
+	this->size = peHeader.getSizeOfRawData(index);
+	this->rawPointer = peHeader.getPointerToRawData(index);
+	this->virtualSize = peHeader.getVirtualSize(index);
+	this->name = peHeader.getSectionName(index);
+
+	char* block = new char[this->size];
+	file.seekg(this->rawPointer, std::ios::beg);
+	file.read(block, this->size);
+
+	this->data = std::vector<uint8_t>(block, block + this->size);
+	delete[] block;
+}
+
+void PeSectionContents::print(std::ostream &stream)
+{
+	auto writePadHex = [&stream](uint32_t val) -> void
+	{
+		stream << "0x" << std::hex << std::left << std::setfill('0') << std::setw(8) << val << "  ";
+	};
+
+	stream << "\t";
+	stream << std::left << std::setfill(' ') << std::setw(10) << this->name;
+	writePadHex(this->virtualSize);
+	writePadHex(this->size);
+	writePadHex(this->RVA);
+	writePadHex(this->rawPointer);
+	stream << std::endl;
+}
+
 
 PeRecompiler::PeRecompiler(
 	std::ostream &_infoStream, std::ostream &_errorStream,
@@ -63,30 +97,20 @@ bool PeRecompiler::loadInputSections()
 	}
 
 	auto& peHeader = this->peFile->peHeader();
+	this->infoStream << "Loading sections" << std::endl;
+	this->infoStream << "\t";
+	this->infoStream << std::left << std::setfill(' ') << std::setw(10) << "Name";
+	this->infoStream << std::hex << std::left << std::setw(12) << "VirtSize";
+	this->infoStream << std::hex << std::left << std::setw(12) << "RawSize";
+	this->infoStream << std::hex << std::left << std::setw(12) << "VirtAddr";
+	this->infoStream << std::hex << std::left << std::setw(12) << "RawAddr";
+	this->infoStream << std::endl;
+
 	for (unsigned int sec = 0; sec < peHeader.getNumberOfSections(); sec++)
 	{
-		auto sc = std::make_shared<PeSectionContents>();
-		sc->index = sec;
-		sc->RVA = peHeader.getVirtualAddress(sec);
-		sc->size = peHeader.getSizeOfRawData(sec);
-		sc->rawPointer = peHeader.getPointerToRawData(sec);
-		sc->virtualSize = peHeader.getVirtualSize(sec);
-		sc->name = peHeader.getSectionName(sec);
-
-		this->infoStream << "Loading section " << sc->name << std::endl;
-		this->infoStream << "\tVirtual Size: 0x" << sc->virtualSize << std::endl;
-		this->infoStream << "\tRVA: 0x" << sc->RVA << std::endl;
-		this->infoStream << "\tRaw Size: 0x" << sc->size << std::endl;
-		this->infoStream << "\tRaw Pointer: 0x" << sc->rawPointer << std::endl;
-
-		char* block = new char[sc->size];
-		file.seekg(peHeader.getPointerToRawData(sec), std::ios::beg);
-		file.read(block, sc->size);
-
-		sc->data = std::vector<uint8_t>(block, block + sc->size);
+		auto sc = std::make_shared<PeSectionContents>(sec, this->peFile, file);
+		sc->print(this->infoStream);
 		this->sectionContents.push_back(sc);
-
-		delete [] block;
 	}
 
 	file.close();
@@ -232,6 +256,17 @@ bool PeRecompiler::rewriteHeader()
 	{
 		this->infoStream << "[Win10 Attack] Skipping header entrypoint rewrite" << std::endl;
 	}
+	return true;
+}
+
+bool PeRecompiler::fixupBase()
+{
+	if (!this->doRewriteReadyCheck())
+		return false;
+
+	this->rewriteBlocks.push_back(std::shared_ptr<RewriteBlock>(new BaseAddressRewriteBlock(this->peFile)));
+	this->infoStream << "Added fixup rewrite for ImageBase; will match actual base in memory" << std::endl;
+
 	return true;
 }
 

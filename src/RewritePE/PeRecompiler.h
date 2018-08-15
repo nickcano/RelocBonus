@@ -3,16 +3,23 @@
 #include <string>
 #include <vector>
 #include <iostream>
+#include <iomanip>
 #include <stdint.h>
 
 class RewriteBlock;
 namespace PeLib { class PeFile32; };
 
-struct PeSectionContents
+class PeSectionContents
 {
+public:
 	std::string name;
 	std::vector<uint8_t> data;
 	uint32_t index, RVA, size, virtualSize, rawPointer;
+
+	PeSectionContents() {}
+	PeSectionContents(uint32_t index, std::shared_ptr<PeLib::PeFile32> &_header, std::ifstream &file);
+
+	void print(std::ostream &stream);
 };
 
 class PeRecompiler
@@ -32,6 +39,7 @@ public:
 	bool performOnDiskRelocations();
 
 	bool rewriteHeader();
+	bool fixupBase();
 	bool rewriteSection(const std::string &name);
 	bool rewriteImports();
 
