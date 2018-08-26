@@ -32,6 +32,7 @@ public:
 	~PeRecompiler() {}
 
 	void useWindows10Attack(bool win10);
+	void doMultiPass(bool multi);
 
 	bool loadInputFile();
 	bool loadInputSections();
@@ -48,6 +49,7 @@ public:
 	bool writeOutputFile();
 
 private:
+	bool multiPass;
 	bool shouldUseWin10Attack;
 	std::ostream &infoStream, &errorStream;
 	std::string inputFileName, outputFileName;
@@ -59,4 +61,7 @@ private:
 	bool doRewriteReadyCheck();
 	std::shared_ptr<PeSectionContents> getSectionByRVA(uint32_t RVA, uint32_t size);
 	bool rewriteSubsectionByRVA(uint32_t RVA, uint32_t size);
+
+	template <class RWBLOCK, typename... ARGS>
+	void addRewriteBlock(ARGS... args);
 };

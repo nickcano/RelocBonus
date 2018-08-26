@@ -12,6 +12,7 @@ public:
 	virtual bool getFirstEntryLoc(uint32_t size, uint32_t &firstEntryRVA, uint32_t &firstEntryOffset) const = 0;
 	virtual bool getNextEntryLoc(uint32_t size, uint32_t lastEntryOffset, uint32_t &nextEntryRVA, uint32_t &nextEntryOffset) const = 0;
 	virtual bool decrementEntry(uint32_t offset, uint32_t value) = 0;
+	virtual std::shared_ptr<RewriteBlock> getNextMultiPassBlock(uint32_t num) { return nullptr;  }
 };
 
 class EntryPointRewriteBlock : public RewriteBlock
@@ -50,7 +51,9 @@ public:
 	virtual bool getNextEntryLoc(uint32_t size, uint32_t lastEntryOffset, uint32_t &nextEntryRVA, uint32_t &nextEntryOffset) const;
 	virtual bool decrementEntry(uint32_t offset, uint32_t value);
 
+	virtual std::shared_ptr<RewriteBlock> getNextMultiPassBlock(uint32_t num);
+
 private:
-	uint32_t startOffset, subSize;
+	uint32_t startOffset, endOffset;
 	std::shared_ptr<PeSectionContents> sec;
 };

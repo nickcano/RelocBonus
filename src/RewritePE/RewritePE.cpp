@@ -72,6 +72,7 @@
 
 // BUG: if reloc isn't the final section, corrupts pe
 // BUG: for some reason binary won't run unless we rewrite at least 1 section, probably a bug in building
+// BUG: sometimes multipass has issues, need to figure out what causes them
 // TODO FOR PRES: add debugging stuff
 
 bool startsWith(const std::string& s, const std::string& prefix)
@@ -122,10 +123,11 @@ auto parseCommandLine(int argc, char* argv[])
 }
 
 const char* usageString =
-"Usage: reloc.exe [--section=<name> | --win10 | --noImports | --rewriteHeader | --stringMatch=<text>] input.exe output.exe\n" \
+"Usage: reloc.exe [--section=<name> | --multipass | --win10 | --noImports | --rewriteHeader | --stringMatch=<text>] input.exe output.exe\n" \
 "    --section=<name>       Rewrite section with <name>\n" \
 "    --win10                Use runtime ASLR Preselection attack, required for targets running Windows 10\n" \
 "    --noImports            Don't rewrite import names or pointers\n" \
+"    --multipass            Go over data multiple times with an offset; this increases obfuscation potency and output size\n" \
 "    --rewriteHeader        Rewrite entrypoint; incompatible with --win10 and header must be writable\n" \
 "    --fixupBase            Relocate ImageBase in PE header to match actual base; header must be writeable\n" \
 "    --stringMatch=<text>   Relocate all occurrences of the string <text>; disables obfuscation of whole sections\n" \
@@ -134,7 +136,7 @@ const char* usageString =
 "    - If no sections are specified, .text, .data, and .rsrc will be used\n" \
 "    - Using --win10 will remove .rsrc from the default section list, as win10 doesn't like obfuscated resources\n" \
 "    - Using --win10 will set --noImports, as the attack is incompatible with import obfuscation\n" \
-"    - Options which say \"header must be writeable\" are effectively useless in the real world, but exist for debugging/experimentation purposes. "\
+"    - Options which say \"header must be writeable\" are effectively useless in the real world, but exist for debugging/experimentation purposes.\n"\
 "\n"\
 "Example 1 - Standard:\n" \
 "    reloc.exe malware.exe obfuscated_malware.exe\n" \
@@ -143,7 +145,15 @@ const char* usageString =
 "Example 3 - Custom Sections:\n" \
 "    reloc.exe --section=CODE --section=DATA --section=BSS malware.exe obfuscated_malware.exe\n" \
 "Example 4 - Obfuscate Strings:\n" \
-"    reloc.exe --stringMatch=\"hello world\" malware.exe obfuscated_malware.exe\n";
+"    reloc.exe --stringMatch=\"hello world\" malware.exe obfuscated_malware.exe\n" \
+"Example 5 - Obfuscate Strings (Multi-Pass):\n" \
+"    reloc.exe --multipass --stringMatch=\"hello world\" malware.exe obfuscated_malware.exe\n" \
+"\n" \
+"If the output executable crashes or fails to start:\n" \
+"    - Obfuscating .rdata can cause issues with certain parts of the PE which may be needed pre-reloc\n" \
+"    - Obfuscating .rsrc can sometimes cause issues, still trying to figure out why\n" \
+"    - Obfuscating a binary where .reloc isn't the final section will cause section overlap, this needs to be fixed\n" \
+"If none of these fix the error, you may be seeing a new bug.\n";
 
 int main(int argc, char* argv[])
 {
@@ -160,6 +170,7 @@ int main(int argc, char* argv[])
 	auto noImports = (cl.find("--noImports") != cl.end()) || win10;
 	auto rewriteHeader = (cl.find("--rewriteHeader") != cl.end());
 	auto fixupBase = (cl.find("--fixupBase") != cl.end());
+	auto multi = (cl.find("--multipass") != cl.end());
 
 	auto sections = cl["--section"];
 	auto stringMatchList = cl["--stringMatch"];
@@ -184,6 +195,7 @@ int main(int argc, char* argv[])
 	do
 	{
 		compiler.useWindows10Attack(win10);
+		compiler.doMultiPass(multi);
 
 		/* load everything up */
 		if (!compiler.loadInputFile()) break;
@@ -192,10 +204,10 @@ int main(int argc, char* argv[])
 		/* statically relocate the file to prepare for rewriting */
 		if (!compiler.performOnDiskRelocations()) break;
 
-		/* if the target machine doesn't enforce DEP, we can re-write parts of the header (such as EntryPoint) */
+		/* if headr is writeable, we can re-write parts of the header (such as EntryPoint) */
 		if (rewriteHeader) if (!compiler.rewriteHeader()) break;
 
-		/* if the target machine doesn't enforce DEP, we can make BaseAddress look normal in memory */
+		/* if header is writeable, we can make BaseAddress look normal in memory */
 		if (fixupBase) if (!compiler.fixupBase()) break;
 
 		/* rewrite some sections */

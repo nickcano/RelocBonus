@@ -49,13 +49,35 @@ void PeSectionContents::print(std::ostream &stream)
 }
 
 
+template <class RWBLOCK, typename... ARGS>
+void PeRecompiler::addRewriteBlock(ARGS... args)
+{
+	auto block = std::shared_ptr<RewriteBlock>(new RWBLOCK(args...));
+	this->rewriteBlocks.push_back(block);
+
+	if (this->multiPass)
+	{
+		auto count = 0;
+		auto newptr = block;
+		while (true)
+		{
+			newptr = newptr->getNextMultiPassBlock(count++);
+			if (newptr.get() != nullptr)
+				this->rewriteBlocks.push_back(newptr);
+			else
+				break;
+		}
+	}
+}
+
+
 PeRecompiler::PeRecompiler(
 	std::ostream &_infoStream, std::ostream &_errorStream,
 	const std::string &_inputFileName, const std::string &_outputFileName
 )
 	: infoStream(_infoStream), errorStream(_errorStream),
 	inputFileName(_inputFileName), outputFileName(_outputFileName),
-	shouldUseWin10Attack(false)
+	multiPass(false), shouldUseWin10Attack(false)
 {
 	this->infoStream << std::hex;
 	this->errorStream << std::hex;
@@ -65,6 +87,11 @@ PeRecompiler::PeRecompiler(
 void PeRecompiler::useWindows10Attack(bool win10)
 {
 	this->shouldUseWin10Attack = win10;
+}
+
+void PeRecompiler::doMultiPass(bool multi)
+{
+	this->multiPass = multi;
 }
 
 bool PeRecompiler::loadInputFile()
@@ -252,7 +279,7 @@ bool PeRecompiler::rewriteHeader()
 
 	if (!this->shouldUseWin10Attack)
 	{
-		this->rewriteBlocks.push_back(std::shared_ptr<RewriteBlock>(new EntryPointRewriteBlock(this->peFile)));
+		this->addRewriteBlock<EntryPointRewriteBlock>(this->peFile);
 		this->infoStream << "Rewrote header entrypoint" << std::endl;
 	}
 	else
@@ -267,7 +294,7 @@ bool PeRecompiler::fixupBase()
 	if (!this->doRewriteReadyCheck())
 		return false;
 
-	this->rewriteBlocks.push_back(std::shared_ptr<RewriteBlock>(new BaseAddressRewriteBlock(this->peFile)));
+	this->addRewriteBlock<BaseAddressRewriteBlock>(this->peFile);
 	this->infoStream << "Added fixup rewrite for ImageBase; will match actual base in memory" << std::endl;
 
 	return true;
@@ -283,7 +310,7 @@ bool PeRecompiler::rewriteSection(const std::string &name)
 		auto& sec = *isec;
 		if (sec->name.compare(name) == 0)
 		{
-			this->rewriteBlocks.push_back(std::shared_ptr<RewriteBlock>(new PeSectionRewriteBlock(sec)));
+			this->addRewriteBlock<PeSectionRewriteBlock>(sec);
 			this->infoStream << "\tRewrote " << name << " section at RVA: 0x" << sec->RVA << std::endl;
 			return true;
 		}
@@ -370,12 +397,13 @@ bool PeRecompiler::rewriteMatches(const std::string &needle)
 				break;
 			auto index = (res - schunk.cbegin()) * sizeof(std::string::value_type);
 
-			// todo test and make reachable through args
 			this->infoStream << "\t\tMatch in " << sec->name << " at offset 0x" << std::hex << index << std::endl;
-			this->rewriteBlocks.push_back(std::shared_ptr<RewriteBlock>(new PeSectionRewriteBlock(sec, index, needle.length())));
+			this->addRewriteBlock<PeSectionRewriteBlock>(sec, index, needle.length() + 1);
 			res++;
 		}
 	}
+
+	return true;
 }
 
 
@@ -400,6 +428,14 @@ bool PeRecompiler::writeOutputFile()
 		first, we need to actually DO THE REWRITES that we have queued up.
 		we will modify the contents buffers we have in rewriteBlocks and
 		keep a ledger of those so we can generate a reloc table later.
+
+		in order to support overlapping relocs, we must record blocks in the
+		reverse order that we decrement them, as relocations are processed
+		in a linear fashion. this is done using .push_front().
+
+		this will work as long as each entry in rewriteBlocks contains _no overlap_,
+		as the reversal happens between entries in rewriteBlocks, not between relocations
+		in each entry.
 	*/
 	struct PackedBlock
 	{
@@ -407,7 +443,7 @@ bool PeRecompiler::writeOutputFile()
 		unsigned int beginRVA;
 		std::vector<unsigned short> offsets;
 	};
-	std::vector<PackedBlock> packedBlocks;
+	std::list<PackedBlock> packedBlocks;
 
 	const uint32_t requestedBase = peHeader.getImageBase();
 	const uint32_t packDelta = (ACTUALIZED_BASE_ADDRESS - requestedBase);
@@ -422,20 +458,20 @@ bool PeRecompiler::writeOutputFile()
 		uint32_t rva, offset;
 		if (!block->getFirstEntryLoc(dataSize, rva, offset))
 			continue;
-		packedBlocks.push_back(PackedBlock(rva));
+		packedBlocks.push_front(PackedBlock(rva));
 
 		do
 		{
 			if (!block->decrementEntry(offset, packDelta))
 				break;
 
-			auto packedBlock = &packedBlocks[packedBlocks.size() - 1];
+			auto packedBlock = packedBlocks.begin();
 			auto rvaOffset = static_cast<uint16_t>((rva - packedBlock->beginRVA));
 			if (rvaOffset >= chunkSize)
 			{
 				rvaOffset = 0;
 				packedBlocks.push_back(PackedBlock(rva));
-				packedBlock = &packedBlocks[packedBlocks.size() - 1];
+				packedBlock = packedBlocks.begin();
 			}
 
 			packedBlock->offsets.push_back(rvaOffset);
@@ -632,6 +668,6 @@ bool PeRecompiler::rewriteSubsectionByRVA(uint32_t RVA, uint32_t size)
 	auto sec = getSectionByRVA(RVA, size);
 	if (!sec)
 		return false;
-	this->rewriteBlocks.push_back(std::shared_ptr<RewriteBlock>(new PeSectionRewriteBlock(sec, RVA - sec->RVA, size)));
+	this->addRewriteBlock<PeSectionRewriteBlock>(sec, RVA - sec->RVA, size);
 	return true;
 }
