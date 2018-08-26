@@ -43,6 +43,8 @@ public:
 	bool rewriteSection(const std::string &name);
 	bool rewriteImports();
 
+	bool rewriteMatches(const std::string &needle);
+
 	bool writeOutputFile();
 
 private:

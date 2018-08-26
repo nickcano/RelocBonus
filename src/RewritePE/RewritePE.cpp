@@ -122,25 +122,28 @@ auto parseCommandLine(int argc, char* argv[])
 }
 
 const char* usageString =
-"Usage: reloc.exe [--section=<name> | --win10 | --noImports | --rewriteHeader] input.exe output.exe\n" \
-"    --section=<name>     Rewrite section with <name>\n" \
-"    --win10              Use runtime ASLR Preselection attack, required for targets running Windows 10\n" \
-"    --noImports          Don't rewrite import names or pointers\n" \
-"    --rewriteHeader      Rewrite entrypoint; incompatible with --win10 and DEP must be disabled on target machine\n" \
-"    --fixupBase          Relocate ImageBase in PE header to match actual base; DEP must be disabled on target machine" \
+"Usage: reloc.exe [--section=<name> | --win10 | --noImports | --rewriteHeader | --stringMatch=<text>] input.exe output.exe\n" \
+"    --section=<name>       Rewrite section with <name>\n" \
+"    --win10                Use runtime ASLR Preselection attack, required for targets running Windows 10\n" \
+"    --noImports            Don't rewrite import names or pointers\n" \
+"    --rewriteHeader        Rewrite entrypoint; incompatible with --win10 and header must be writable\n" \
+"    --fixupBase            Relocate ImageBase in PE header to match actual base; header must be writeable\n" \
+"    --stringMatch=<text>   Relocate all occurrences of the string <text>; disables obfuscation of whole sections\n" \
 "\n" \
 "Notes:\n" \
 "    - If no sections are specified, .text, .data, and .rsrc will be used\n" \
 "    - Using --win10 will remove .rsrc from the default section list, as win10 doesn't like obfuscated resources\n" \
 "    - Using --win10 will set --noImports, as the attack is incompatible with import obfuscation\n" \
-"    - For options incompatible with DEP, it must be disabled system-wide via bcdedit. Executable-level DEP configuration is applied via NtSetInformationProcess after relocs are applied." \
+"    - Options which say \"header must be writeable\" are effectively useless in the real world, but exist for debugging/experimentation purposes. "\
 "\n"\
 "Example 1 - Standard:\n" \
 "    reloc.exe malware.exe obfuscated_malware.exe\n" \
 "Example 2 - Standard Win10:\n" \
 "    reloc.exe --win10 malware.exe obfuscated_malware.exe\n" \
 "Example 3 - Custom Sections:\n" \
-"    reloc.exe --section=CODE --section=DATA --section=BSS malware.exe obfuscated_malware.exe\n";
+"    reloc.exe --section=CODE --section=DATA --section=BSS malware.exe obfuscated_malware.exe\n" \
+"Example 4 - Obfuscate Strings:\n" \
+"    reloc.exe --stringMatch=\"hello world\" malware.exe obfuscated_malware.exe\n";
 
 int main(int argc, char* argv[])
 {
@@ -159,12 +162,22 @@ int main(int argc, char* argv[])
 	auto fixupBase = (cl.find("--fixupBase") != cl.end());
 
 	auto sections = cl["--section"];
-	if (sections.size() == 0)
+	auto stringMatchList = cl["--stringMatch"];
+
+	if (!stringMatchList.size())
 	{
-		sections.push_back(".text");
-		sections.push_back(".data");
-		if (!win10)
-			sections.push_back(".rsrc");
+		if (sections.size() == 0)
+		{
+			sections.push_back(".text");
+			sections.push_back(".data");
+			if (!win10)
+				sections.push_back(".rsrc");
+		}
+	}
+	else if (sections.size())
+	{
+		std::cout << "Disabling obfuscation of whole sections due to --stringMatch" << std::endl;
+		sections.clear();
 	}
 
 	PeRecompiler compiler(std::cout, std::cerr, args[1], args[2]);
@@ -186,11 +199,26 @@ int main(int argc, char* argv[])
 		if (fixupBase) if (!compiler.fixupBase()) break;
 
 		/* rewrite some sections */
-		std::cout << "Obfuscating sections" << std::endl;
+		if (sections.size())
+			std::cout << "Obfuscating sections" << std::endl;
 		bool failed = false;
 		for (auto sec : sections)
 		{
 			if (!compiler.rewriteSection(sec))
+			{
+				failed = true;
+				break;
+			}
+		}
+		if (failed) break;
+
+		/* rewrite string matches */
+		if (stringMatchList.size())
+			std::cout << "Obfuscating string matches" << std::endl;
+		failed = false;
+		for (auto str : stringMatchList)
+		{
+			if (!compiler.rewriteMatches(str))
 			{
 				failed = true;
 				break;

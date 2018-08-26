@@ -5,6 +5,9 @@
 #include "RewriteBlock.h"
 #include "ASLRPreselectionStub.h"
 
+#include <algorithm>
+#include <functional>
+
 #include <Windows.h>
 
 
@@ -346,6 +349,33 @@ bool PeRecompiler::rewriteImports()
 	}
 
 	return true;
+}
+
+bool PeRecompiler::rewriteMatches(const std::string &needle)
+{
+	if (!this->doRewriteReadyCheck())
+		return false;
+
+	this->infoStream << "\tObfuscating all instances of string: " << needle << std::endl;
+	std::boyer_moore_horspool_searcher<std::string::const_iterator> searcher(needle.cbegin(), needle.cend());
+	for (auto isec = this->sectionContents.begin(); isec != this->sectionContents.end(); isec++)
+	{
+		auto& sec = *isec;
+		auto schunk = std::string(sec->data.begin(), sec->data.end());
+		auto res = schunk.cbegin();
+		while (true)
+		{
+			res = std::search(res, schunk.cend(), searcher);
+			if (res == schunk.cend())
+				break;
+			auto index = (res - schunk.cbegin()) * sizeof(std::string::value_type);
+
+			// todo test and make reachable through args
+			this->infoStream << "\t\tMatch in " << sec->name << " at offset 0x" << std::hex << index << std::endl;
+			this->rewriteBlocks.push_back(std::shared_ptr<RewriteBlock>(new PeSectionRewriteBlock(sec, index, needle.length())));
+			res++;
+		}
+	}
 }
 
 

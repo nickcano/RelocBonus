@@ -277,7 +277,10 @@ namespace PeLib
 		/// Fixes a resource node's NumberOfIdEntries value.
 		static void fix(ResourceNode* node)
 		{
-			node->header.NumberOfIdEntries = (unsigned int)node->children.size() - std::count_if(node->children.begin(), node->children.end(), std::mem_fun_ref(&ResourceChild::isNamedResource));
+			node->header.NumberOfIdEntries = node->children.size();
+			for (auto c : node->children)
+				if (c.isNamedResource())
+					node->header.NumberOfIdEntries--;
 		}
 	};
 
@@ -288,9 +291,13 @@ namespace PeLib
 		/// Fixes a resource node's NumberOfNamedEntries value.
 		static void fix(ResourceNode* node)
 		{
-			node->header.NumberOfNamedEntries = static_cast<PeLib::word>(std::count_if(node->children.begin(), node->children.end(), std::mem_fun_ref(&ResourceChild::isNamedResource)));
+			node->header.NumberOfNamedEntries = 0;
+			for (auto c : node->children)
+				if (c.isNamedResource())
+					node->header.NumberOfNamedEntries++;
 		}
 	};
+
 	
 	/// Class that represents the resource directory of a PE file.	  
 	/**
