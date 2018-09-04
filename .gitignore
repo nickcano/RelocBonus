@@ -1,0 +1,13 @@
+.vs
+*/.vs/*
+bin/*
+ipch/*
+BuildTemp/*
+*.user
+*.sdf
+*.suo
+deps/PeLib/Debug/*
+deps/PeLib/Release/*
+*.lib
+*.pdb
+*.idb
