@@ -548,58 +548,37 @@ bool PeRecompiler::writeOutputFile()
 	/* inject preselection shellcode, if needed */
 	if (this->shouldUseWin10Attack)
 	{
-		this->infoStream << "\t[Win10 Attack] Injecting ASLR preselection shellcode" << std::endl;
+		this->infoStream << "\t[Win10 Attack] Injecting ASLR preselection stub" << std::endl;
 
+		/* prepare the stub */
 		void* originalEntrypoint = (void*)peHeader.getAddressOfEntryPoint();
-		this->infoStream << "\t\tOriginal EP: 0x" << std::hex << originalEntrypoint << std::endl;
 
 		void* stub;
 		size_t stubLen;
 		if (!prepareStub(originalEntrypoint, stub, stubLen, this->infoStream, this->errorStream))
 		{
-			this->errorStream << "Failed to inject ASLR preselection shellcode!" << std::endl;
+			this->errorStream << "Failed to inject ASLR preselection stub!" << std::endl;
 			return false;
 		}
 
+		/* inject a section to hold the stub */
+		auto access = PeLib::PELIB_IMAGE_SCN_MEM_EXECUTE | PeLib::PELIB_IMAGE_SCN_MEM_WRITE |
+						PeLib::PELIB_IMAGE_SCN_MEM_READ | PeLib::PELIB_IMAGE_SCN_CNT_INITIALIZED_DATA |
+						PeLib::PELIB_IMAGE_SCN_CNT_CODE;
+		auto sc = this->allocSection(".presel", stubLen, access);
+
 		peHeader.addSection(".presel", stubLen);
 
-		/* re-validate the binary since we added a section */
-		peHeader.makeValid(mzHeader.getAddressOfPeHeader());
-		this->infoStream << "\t\tRevalidated new PE header" << std::endl;
-
-		/* point the entrypoint at the shellcode */
-		auto rvaOfNewSection = peHeader.getVirtualAddress(peHeader.getNumberOfSections() - 1);
-		auto offsetOfNewSection = peHeader.rvaToOffset(rvaOfNewSection);
-		this->infoStream << "\t\tShellcode section RVA: 0x" << std::hex << rvaOfNewSection << std::endl;
-		this->infoStream << "\t\tShellcode section Offset: 0x" << std::hex << offsetOfNewSection << std::endl;
-		peHeader.setAddressOfEntryPoint(rvaOfNewSection);
+		/* point the entrypoint at the stub */
+		auto offsetOfNewSection = peHeader.rvaToOffset(sc->RVA);
+		this->infoStream << "\t\tOriginal EP: 0x" << std::hex << originalEntrypoint << std::endl;
+		this->infoStream << "\t\tStub Section RVA: 0x" << std::hex << sc->RVA << std::endl;
+		this->infoStream << "\t\tStub Section Offset: 0x" << std::hex << offsetOfNewSection << std::endl;
+		peHeader.setAddressOfEntryPoint(sc->RVA);
 		this->infoStream << "\t\tEP updated to RVA" << std::endl;
 
-		/* make the new section executable */
-		peHeader.setCharacteristics(peHeader.getNumberOfSections() - 1,
-			PeLib::PELIB_IMAGE_SCN_MEM_EXECUTE |
-			PeLib::PELIB_IMAGE_SCN_MEM_WRITE |
-			PeLib::PELIB_IMAGE_SCN_MEM_READ |
-			PeLib::PELIB_IMAGE_SCN_CNT_INITIALIZED_DATA |
-			PeLib::PELIB_IMAGE_SCN_CNT_CODE);
-
-		/* prepare the section contents */
-		auto sc = std::make_shared<PeSectionContents>();
-		sc->index = peHeader.getNumberOfSections() - 1;
-		sc->RVA = peHeader.getVirtualAddress(sc->index);
-		sc->size = peHeader.getSizeOfRawData(sc->index);
-		sc->rawPointer = peHeader.getPointerToRawData(sc->index);
-		sc->virtualSize = peHeader.getVirtualSize(sc->index);
-		sc->name = peHeader.getSectionName(sc->index);
-
-		this->infoStream << "\t\tInjected Section " << sc->name << std::endl;
-		this->infoStream << "\t\t\tVirtual Size: 0x" << sc->virtualSize << std::endl;
-		this->infoStream << "\t\t\tRVA: 0x" << sc->RVA << std::endl;
-		this->infoStream << "\t\t\tRaw Size: 0x" << sc->size << std::endl;
-		this->infoStream << "\t\t\tRaw Pointer: 0x" << sc->rawPointer << std::endl;
-
+		/* write the stub to the section */
 		pushBytes((const char*)stub, stubLen, sc->data);
-		this->sectionContents.push_back(sc);
 	}
 	
 	/* write original MZ and PE headers to new binary */
@@ -661,6 +640,42 @@ std::shared_ptr<PeSectionContents> PeRecompiler::getSectionByRVA(uint32_t RVA, u
 		return sec;
 	}
 	return nullptr;
+}
+
+std::shared_ptr<PeSectionContents> PeRecompiler::allocSection(const std::string& name, uint32_t size, uint32_t access)
+{
+	auto& peHeader = this->peFile->peHeader();
+	auto& mzHeader = this->peFile->mzHeader();
+
+	/* create the section */
+	// TODO make this re-use old sections which were cleared (specifically, .reloc)
+	peHeader.addSection(name, size);
+	this->infoStream << "\t\tInjected Section " << name << std::endl;
+
+	/* re-validate the binary since we added a section */
+	peHeader.makeValid(mzHeader.getAddressOfPeHeader());
+	auto secIndex = peHeader.getNumberOfSections() - 1;
+
+	/* set up proper section access */
+	peHeader.setCharacteristics(secIndex, access);
+
+	/* prepare the section contents */
+	auto sc = std::make_shared<PeSectionContents>();
+	sc->index = secIndex;
+	sc->RVA = peHeader.getVirtualAddress(sc->index);
+	sc->size = peHeader.getSizeOfRawData(sc->index);
+	sc->rawPointer = peHeader.getPointerToRawData(sc->index);
+	sc->virtualSize = peHeader.getVirtualSize(sc->index);
+	sc->name = peHeader.getSectionName(sc->index);
+
+	/* display some info and nope out */
+	this->infoStream << "\t\t\tVirtual Size: 0x" << sc->virtualSize << std::endl;
+	this->infoStream << "\t\t\tRVA: 0x" << sc->RVA << std::endl;
+	this->infoStream << "\t\t\tRaw Size: 0x" << sc->size << std::endl;
+	this->infoStream << "\t\t\tRaw Pointer: 0x" << sc->rawPointer << std::endl;
+
+	this->sectionContents.push_back(sc);
+	return sc;
 }
 
 bool PeRecompiler::rewriteSubsectionByRVA(uint32_t RVA, uint32_t size)

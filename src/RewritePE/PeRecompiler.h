@@ -60,7 +60,9 @@ private:
 
 	bool doRewriteReadyCheck();
 	std::shared_ptr<PeSectionContents> getSectionByRVA(uint32_t RVA, uint32_t size);
+	std::shared_ptr<PeSectionContents> allocSection(const std::string& name, uint32_t size, uint32_t access);
 	bool rewriteSubsectionByRVA(uint32_t RVA, uint32_t size);
+	
 
 	template <class RWBLOCK, typename... ARGS>
 	void addRewriteBlock(ARGS... args);
