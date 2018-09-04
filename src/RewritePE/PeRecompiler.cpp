@@ -470,7 +470,7 @@ bool PeRecompiler::writeOutputFile()
 			if (rvaOffset >= chunkSize)
 			{
 				rvaOffset = 0;
-				packedBlocks.push_back(PackedBlock(rva));
+				packedBlocks.push_front(PackedBlock(rva));
 				packedBlock = packedBlocks.begin();
 			}
 
