@@ -2,6 +2,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <list>
 #include <iostream>
 #include <iomanip>
 #include <stdint.h>
@@ -54,7 +55,8 @@ private:
 	std::ostream &infoStream, &errorStream;
 	std::string inputFileName, outputFileName;
 	std::shared_ptr<PeLib::PeFile32> peFile;
-
+	
+	std::list<std::shared_ptr<PeSectionContents>> sectionPool;
 	std::vector<std::shared_ptr<PeSectionContents>> sectionContents;
 	std::vector<std::shared_ptr<RewriteBlock>> rewriteBlocks;
 

@@ -647,35 +647,77 @@ std::shared_ptr<PeSectionContents> PeRecompiler::allocSection(const std::string&
 	auto& peHeader = this->peFile->peHeader();
 	auto& mzHeader = this->peFile->mzHeader();
 
-	/* create the section */
-	// TODO make this re-use old sections which were cleared (specifically, .reloc)
-	peHeader.addSection(name, size);
-	this->infoStream << "\t\tInjected Section " << name << std::endl;
+	/*
+		if possible, find an unused section to reuse.
 
-	/* re-validate the binary since we added a section */
-	peHeader.makeValid(mzHeader.getAddressOfPeHeader());
-	auto secIndex = peHeader.getNumberOfSections() - 1;
+		this works in theory, but needs to be properly tested
+		and, as such, is disabled. my major concern right now
+		is that we may re-use a section that is marked as discardable,
+		which is typically a property of .reloc, which is also the only
+		section which would currently be a reuse candidate. (fancy pooling
+		just being an abstraction for future, even though there's only one)
+
+		I am concerned about this because discardable sections may not have space
+		alloted for them in the in-memory mapping, so reusing them for things
+		which must not be discarded, such as injected stubs, can be
+		problematic. This isn't always the case. For instance, if the section is
+		the final section in the binary, there shouldn't be an issue. Might also
+		be able to mess with VA's and such for other cases.
+
+		In short, this is here because I want it to work, but it currently
+		needs more testing and consideration. You might say "wait, the code
+		is right here, what do you mean this is disabled?" And the answer is
+		that we never add anything to this->sectionPool, so the loop won't run.
+	*/
+	std::shared_ptr<PeSectionContents> newSec = nullptr;
+	auto finalSecIndex = peHeader.getNumberOfSections() - 1;
+	for (auto& sec : this->sectionPool)
+	{
+		if (sec->size > size || sec->index == finalSecIndex)
+		{
+			this->infoStream << "\t\tRepurposed Section " << sec->name << " as " << name << std::endl;
+			newSec = sec;
+			peHeader.setSectionName(sec->index, name);
+			peHeader.setVirtualSize(sec->index, size);
+			peHeader.setSizeOfRawData(sec->index, size);
+			this->sectionPool.remove(sec);
+			break;
+		}
+	}
+
+	/* if reuse failed, alloc a new section */
+	if (!newSec)
+	{
+		/* allocate it */
+		peHeader.addSection(name, size);
+		this->infoStream << "\t\tInjected Section " << name << std::endl;
+
+		/* re-validate the binary since we added a section */
+		peHeader.makeValid(mzHeader.getAddressOfPeHeader());
+
+		/* track the section */
+		newSec = std::make_shared<PeSectionContents>();
+		newSec->index = peHeader.getNumberOfSections() - 1;
+		this->sectionContents.push_back(newSec);
+	}
 
 	/* set up proper section access */
-	peHeader.setCharacteristics(secIndex, access);
+	peHeader.setCharacteristics(newSec->index, access);
 
 	/* prepare the section contents */
-	auto sc = std::make_shared<PeSectionContents>();
-	sc->index = secIndex;
-	sc->RVA = peHeader.getVirtualAddress(sc->index);
-	sc->size = peHeader.getSizeOfRawData(sc->index);
-	sc->rawPointer = peHeader.getPointerToRawData(sc->index);
-	sc->virtualSize = peHeader.getVirtualSize(sc->index);
-	sc->name = peHeader.getSectionName(sc->index);
+	newSec->RVA = peHeader.getVirtualAddress(newSec->index);
+	newSec->size = peHeader.getSizeOfRawData(newSec->index);
+	newSec->rawPointer = peHeader.getPointerToRawData(newSec->index);
+	newSec->virtualSize = peHeader.getVirtualSize(newSec->index);
+	newSec->name = peHeader.getSectionName(newSec->index);
 
 	/* display some info and nope out */
-	this->infoStream << "\t\t\tVirtual Size: 0x" << sc->virtualSize << std::endl;
-	this->infoStream << "\t\t\tRVA: 0x" << sc->RVA << std::endl;
-	this->infoStream << "\t\t\tRaw Size: 0x" << sc->size << std::endl;
-	this->infoStream << "\t\t\tRaw Pointer: 0x" << sc->rawPointer << std::endl;
+	this->infoStream << "\t\t\tVirtual Size: 0x" << newSec->virtualSize << std::endl;
+	this->infoStream << "\t\t\tRVA: 0x" << newSec->RVA << std::endl;
+	this->infoStream << "\t\t\tRaw Size: 0x" << newSec->size << std::endl;
+	this->infoStream << "\t\t\tRaw Pointer: 0x" << newSec->rawPointer << std::endl;
 
-	this->sectionContents.push_back(sc);
-	return sc;
+	return newSec;
 }
 
 bool PeRecompiler::rewriteSubsectionByRVA(uint32_t RVA, uint32_t size)
