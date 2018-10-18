@@ -14,7 +14,7 @@ There are quite a few nifty capabilities built right into the tool:
 - Targeting specific sections with `--section`
 - Doing multiple passes of obfuscation using `--multipass`
 - Obfuscating only specific strings using `--stringMatch="string to obfuscate"`
-- Obfuscating imports (on by default turned off with `--noImports`)
+- Obfuscating imports (on by default; turned off with `--noImports`)
 
 ## Code
 
