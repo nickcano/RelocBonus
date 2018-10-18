@@ -44,3 +44,7 @@ reloc.exe --win10 malware.exe obfuscated_malware.exe
 ```
 reloc.exe --stringMatch="hello world" malware.exe obfuscated_malware.exe
 ```
+
+## Samples
+
+Some pre-built samples exist in the `samples/` directory.
