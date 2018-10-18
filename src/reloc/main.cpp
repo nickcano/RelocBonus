@@ -1,4 +1,3 @@
-
 #include "PeRecompiler.h"
 #include <Windows.h>
 
@@ -7,73 +6,19 @@
 #include <string>
 
 
-/*refs
+/*
+	useful refs
 	http://reverseengineerlog.blogspot.com/2017/03/activating-windows-loader-debug-messages.html
 	https://msdn.microsoft.com/en-us/library/ms809762.aspx
 	http://images2015.cnblogs.com/blog/268182/201509/268182-20150906154155451-80554465.jpg (i'm gonna print this for my wall)
 */
 
-/* windows 10 workarounds
-	This doesn't work out of the box on Windows 10, so there are a few workarounds.
-
-	Method 1 - Execution Options
-		Method:
-			Setting "Image File Execution Options" option "Mandatory ASLR" to "On" and "Bottom-Up ASLR" to "Off" causes it to work.
-			Reg keys:
-				Name: Computer\HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\name_of_exe\MitigationAuditOptions
-				Type: REG_BINARY
-				Value: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-
-				Name: Computer\HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\name_of_exe\MitigationOptions
-				Type: REG_BINARY
-				Value: 00 01 22 00 00 00 00 00 00 00 00 00 00 00 00 00 
-		Drawbacks:
-			- Requires admin
-			- Easy to monitor these keys
-			- Requires execution before the packed code
-	Method 2 - ASLR Preselection
-		Method:
-			Step 1: Generate packed binary expecting a base address which is valid with "Bottom-Up ASLR" (something like 0x03B00000) instead of the expected 0x00010000
-			Step 2: Some pre-launcher spams LoadLibrary on the executable, watching for the expected base address to appear.
-			step 2b: after a LoadLibrary call which doesn't give the proper base, call FreeLibrary and then use VirtualAlloc to occupy that memory, forcing the next allocation to a new address.
-			Step 3: Once the expected base appears, launch the binary. Loader should re-use this base.
-		Drawbacks:
-			- Slim but real possibility that the chosen base will conflict with another that is in-use
-			- Requires execution before the packed code
-			- May not be compatible with systems which are vulnerable to the original attack
-	Method 3 - Hybrid
-		Method:
-			Method 1 causes the system to behave like Windows 7 and allows the original attack to work.
-			Method 2 is an attack tailored to systems on which it doesn't work, and which may not work on older systems.
-			Method 3 will take both of these into account. When packing the PE header, it will generate a duplicate of each PE section.
-				The orignal sections will be tailored to the original attack. It will work on W7 and, on the off-chance the W10 settings are right, it will work there as well.
-				The duplicates of the sections will be created as if they are carrying out the Method 2 attack.
-			Method 3 will then inject a small stub of position-agnostic code which can act as the pre-loader.
-				This code will check if the base is 0x00010000, and jump to the original entry-point if so.
-				Next, if this code magically happens to fall at the preselected bottom-up base (unlikely), it will jump to the duplicate entry-point.
-				Otherwise, this code will make a copy of the binary and begin running the ASLR preselection attack with the copied binary, executing it upon success.
-			Optionally, we can N-plicate instead of duplicate and preselect N addresses, since there's a small chance preselection can fail when an address in in-use.
-		Drawbacks:
-			- Doubles the size of the binary because of section duplicates
-			- Copying of self executable may be seen as suspicious
-
-
-
-	############ OKAY SO THE ABOVE KINDA WRONG ############
-		The mentions about ASLR Preselection aren't exactly accurate.
-		#1 we don't need to use a different address for preselection, 0x10000 will work
-		#2 The LoadLibrary/VirtualAlloc/FreeLibrary method doesn't work as originally thought.
-			The right way is to have the first instance make a copy of itself, then launch that copy in a loop until it has the right base address.
-			Grabbing and closing a mapping to the copy between executions will force a new base address every time.
-			The copy should have a way to tell the original if it failed or succeeded, success meaning it sees 0x10000 ad it's own base address.
-
-*/
-
+// BUG: sometimes windows 10 won't map at 0x10000 at all, causing the preselection loop to go forever;
+//      need to update code to use a base address which it knows will get hit
 // BUG: for some reason binary won't run unless we rewrite at least 1 section, probably a bug in building
 // BUG: sometimes multipass has issues, need to figure out what causes them
 // IMPROVEMENT: need to add "dodging" so obfuscation can work 'around' certain data/structures which are
 //              needed by loader before relocations without sacrificing obfuscation of an entire section
-// TODO FOR PRES: add debugging stuff
 
 bool startsWith(const std::string& s, const std::string& prefix)
 {

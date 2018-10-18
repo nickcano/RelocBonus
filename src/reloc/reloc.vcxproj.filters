@@ -12,13 +12,13 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="RewritePE.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="RewriteBlock.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="PeRecompiler.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
