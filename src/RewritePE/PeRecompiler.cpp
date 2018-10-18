@@ -145,6 +145,25 @@ bool PeRecompiler::loadInputSections()
 
 	file.close();
 
+	/* 
+	TODO:
+		when allocSection() has been properly finished and is able to serve
+		a new relocations section during building, we can remove the following
+		two checks; the first is done later as well, and the second won't be
+		needed once section alloc is properly working.
+	*/
+	auto relocSec = this->getSectionByRVA(peHeader.getIddBaseRelocRva(), 4);
+	if (!relocSec)
+	{
+		this->errorStream << "Failed to locate reloc section!" << std::endl;
+		return false;
+	}
+	if (relocSec->index != (peHeader.getNumberOfSections() - 1))
+	{
+		this->errorStream << "Reloc section '" << relocSec->name << "' is not final section; currently unsupported" << std::endl;
+		return false;
+	}
+
 	return true;
 }
 

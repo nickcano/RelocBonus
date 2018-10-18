@@ -69,10 +69,10 @@
 
 */
 
-
-// BUG: if reloc isn't the final section, corrupts pe
 // BUG: for some reason binary won't run unless we rewrite at least 1 section, probably a bug in building
 // BUG: sometimes multipass has issues, need to figure out what causes them
+// IMPROVEMENT: need to add "dodging" so obfuscation can work 'around' certain data/structures which are
+//              needed by loader before relocations without sacrificing obfuscation of an entire section
 // TODO FOR PRES: add debugging stuff
 
 bool startsWith(const std::string& s, const std::string& prefix)
