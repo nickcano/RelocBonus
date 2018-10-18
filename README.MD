@@ -25,25 +25,17 @@ Because of the usage of some C++17 features, this project and it's dependencies 
 
 Usage is fully described by running `reloc.exe` with no arguments. Here are some example invocations:
 
-### Standard
-```
-reloc.exe malware.exe obfuscated_malware.exe
-```
+**Standard**
+`reloc.exe malware.exe obfuscated_malware.exe`
 
-### Standard Multipass
-```
-reloc.exe --multipass malware.exe obfuscated_malware.exe
-```
+**Standard Multipass**
+`reloc.exe --multipass malware.exe obfuscated_malware.exe`
 
-### Standard Win10
-```
-reloc.exe --win10 malware.exe obfuscated_malware.exe
-```
+**Standard Win10**
+`reloc.exe --win10 malware.exe obfuscated_malware.exe`
 
-### Obfuscate Strings
-```
-reloc.exe --stringMatch="hello world" malware.exe obfuscated_malware.exe
-```
+**Obfuscate Strings**
+`reloc.exe --stringMatch="hello world" malware.exe obfuscated_malware.exe`
 
 ## Samples
 
